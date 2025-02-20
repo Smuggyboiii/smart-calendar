@@ -1,7 +1,6 @@
 import pandas as pd
 from datetime import datetime
-from skopt import gp_minimize
-from skopt.space import Integer
+
 
 
 class Appointment:

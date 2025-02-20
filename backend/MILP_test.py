@@ -1,31 +1,41 @@
 from pulp import LpMaximize, LpProblem, LpVariable, lpSum, LpStatus
 import pandas as pd
+
 prob = LpProblem("Smart_Calendar_Optimization", LpMaximize)
 
 appointments = {
-    "title": ["workout", "study", "lunch", "meeting", "coding", "dinner", "reading"],
-    "start": ["08:00", "10:00", "12:00", "14:00", "16:00", "18:30", "20:00"],
-    "end": ["09:00", "12:00", "13:00", "15:00", "17:30", "19:30", "21:00"],
-    "category": ["exercise", "task", "food", "task", "task", "food", "break"],
-    "fixed": ["no", "no", "no", "no", "no", "no", "no"]
+    "title": [
+        "workout","study1","study2","lunch","study3","break"
+    ],
+    "start": [
+        "07:00", "08:00", "09:00", "10:00", "11:00","15:00"
+    ],
+    "end": [
+        "08:00", "09:00", "10:00", "11:00", "12:00", "16:00"
+    ],
+    "category": [
+        "exercise", "task", "task","food", "task", "break"
+    ],
+    "fixed": [
+        "no", "no", "no", "yes", "no","no"
+    ]
 }
 
-
 category_matrix = {
-        "task": {"task": -10, "exercise": +10, "break": +10, "food": +7, "social": +6, "chores": +4, "travel": 0},
-        "exercise": {"task": +10, "exercise": -10, "break": +5, "food": +5, "social": +3, "chores": 0, "travel": 0},
-        "break": {"task": +10, "exercise": +5, "break": -10, "food": -3, "social": -5, "chores": +3, "travel": 0},
-        "food": {"task": +3, "exercise": -5, "break": +3, "food": -10, "social": 0, "chores": +5, "travel": 0},
-        "social": {"task": +10, "exercise": +10, "break": -1, "food": 0, "social": -10, "chores": +5, "travel": 0},
-        "chores": {"task": +10, "exercise": +5, "break": -5, "food": -5, "social": +5, "chores": -10, "travel": 0},
-        "travel": {"task": 0, "exercise": 0, "break": 0, "food": 0, "social": 0, "chores": 0, "travel": 0}
-        }
+    "task":    {"task": -10, "exercise": +10, "break": +10, "food": +7, "social": +6, "chores": +4, "travel": 0},
+    "exercise": {"task": +10, "exercise": -10, "break": +5, "food": 0, "social": +3, "chores": 0, "travel": -3},
+    "break":   {"task": +10, "exercise": +5, "break": -10, "food": +3, "social": +3, "chores": +3, "travel": 0},
+    "food":    {"task": +3, "exercise": 0, "break": +3, "food": -10, "social": 0, "chores": +5, "travel": +3},
+    "social":  {"task": +10, "exercise": +10, "break": +3, "food": 0, "social": -10, "chores": +5, "travel": +3},
+    "chores":  {"task": +10, "exercise": +5, "break": 0, "food": -5, "social": +5, "chores": -10, "travel": -3},
+    "travel":  {"task": 0, "exercise": -3, "break": 0, "food": +3, "social": +3, "chores": -3, "travel": -10}
+}
 
 df = pd.DataFrame(appointments)
 print(df)
 
 # Start and end of the day
-s_min = 5
+s_min = 7
 s_max = 22
 
 # Creating the LpVariables
@@ -52,20 +62,33 @@ need to figure out why some events are not scheduled at all
 and why more are not scheduled when they are fixed..
 """
 
-#Constraint 1 -> no overlapping events
+
+#Constraint1 no overlapping
+# Large M for enforcing constraints (should be large enough but not too large)
+M = s_max - s_min  # The largest possible scheduling range
+
+# Create binary decision variables for ordering
+z_vars = {}  # Store binary variables
 
 for i in range(len(df)):
-    for j in range(i+1,len(df)):
-        event_i =  df.loc[i,"title"]
-        event_j =  df.loc[j,"title"]
+    for j in range(i + 1, len(df)):
+        event_i = df.loc[i, "title"]
+        event_j = df.loc[j, "title"]
 
         s_i = s_vars[event_i]  # Start time of event i
         s_j = s_vars[event_j]  # Start time of event j
         d_i = int(df.loc[i, "end"].split(":")[0]) - int(df.loc[i, "start"].split(":")[0])  # Duration of event i
         d_j = int(df.loc[j, "end"].split(":")[0]) - int(df.loc[j, "start"].split(":")[0])  # Duration of event j
 
-        # Constraint: One event must finish before the other starts
-        prob += (s_i + d_i <= s_j) or (s_j + d_j <= s_i), f"NoOverlap_{event_i}_{event_j}"
+        # Create binary variable to decide order (z_ij = 1 if i before j, 0 otherwise)
+        z_ij = LpVariable(f"z_{event_i}_{event_j}", cat="Binary")
+        z_vars[(event_i, event_j)] = z_ij
+
+        # Enforce no overlap using Big-M method
+        prob += s_i + d_i <= s_j + M * (1 - z_ij), f"NoOverlap_{event_i}_{event_j}_1"
+        prob += s_j + d_j <= s_i + M * z_ij, f"NoOverlap_{event_i}_{event_j}_2"
+
+
 
 # Delta constraint
 
@@ -124,8 +147,12 @@ prob += lpSum(1 - delta_vars[(i, j)] for i in df["title"] for j in df["title"] i
 prob += lpSum(category_matrix[df.loc[i, "category"]][df.loc[j, "category"]] * delta_vars[(df.loc[i, "title"], df.loc[j, "title"])]
              for i in range(len(df)) for j in range(len(df)) if i != j), "Maximize_Transition_Score"
 
+
 prob.solve()
-for v in prob.variables():
-    print(v.name, "=", v.varValue)
 
+print("\n📋 Optimized Schedule:")
+for event in df["title"]:
+    start_time = s_vars[event] if isinstance(s_vars[event], int) else s_vars[event].varValue
+    print(f"{event}: {start_time}:00")
 
+print("Solver Status:", LpStatus[prob.status])
