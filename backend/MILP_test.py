@@ -1,4 +1,4 @@
-from pulp import LpMaximize, LpProblem, LpVariable, lpSum, LpStatus
+from pulp import *
 import pandas as pd
 
 prob = LpProblem("Smart_Calendar_Optimization", LpMaximize)
@@ -20,6 +20,8 @@ appointments = {
         "no", "no", "no", "yes", "no","no"
     ]
 }
+
+#category matrix optimisation does not work -_- need to fix at least the display of the schedule works correctly now
 
 category_matrix = {
     "task":    {"task": -10, "exercise": +10, "break": +10, "food": +7, "social": +6, "chores": +4, "travel": 0},
@@ -57,11 +59,6 @@ for i in range(len(df)):
         lpvariable_lst.append(var)
         s_vars[df.loc[i,"title"]] = var  # Store variable
         
-"""
-need to figure out why some events are not scheduled at all 
-and why more are not scheduled when they are fixed..
-"""
-
 
 #Constraint1 no overlapping
 # Large M for enforcing constraints (should be large enough but not too large)
@@ -102,7 +99,7 @@ for i in range(len(df)):
             delta_name = f"delta_{df.loc[i, 'title']}_{df.loc[j, 'title']}"
             delta_var = LpVariable(delta_name, cat="Binary")
             delta_vars[(df.loc[i, 'title'], df.loc[j, 'title'])] = delta_var  # Store in dictionary
-M = 1000  # Large number to ensure constraint works
+
 
 for i in range(len(df)):
     for j in range(len(df)):
@@ -119,12 +116,12 @@ for i in range(len(df)):
             prob += s_j >= (s_i + d_i) - M * (1 - delta_ij), f"Delta_{event_i}_{event_j}"
 
 # Enforce fixed events stay fixed with some flexibility
-for i in range(len(df)):
-    if df.loc[i, "fixed"] == "yes":
-        event = df.loc[i, "title"]
-        fixed_start_time = int(df.loc[i, "start"].split(":")[0])  # Convert HH:MM to integer hours
-        prob += s_vars[event] >= fixed_start_time - 1, f"FixedLower_{event}"
-        prob += s_vars[event] <= fixed_start_time + 1, f"FixedUpper_{event}"
+# for i in range(len(df)):
+#     if df.loc[i, "fixed"] == "yes":
+#         event = df.loc[i, "title"]
+#         fixed_start_time = int(df.loc[i, "start"].split(":")[0])  # Convert HH:MM to integer hours
+#         prob += s_vars[event] >= fixed_start_time - 1, f"FixedLower_{event}"
+#         prob += s_vars[event] <= fixed_start_time + 1, f"FixedUpper_{event}"
 
 #All events are after the start and before the end of day
 for i in range(len(df)):
@@ -133,19 +130,24 @@ for i in range(len(df)):
     prob += s_vars[event] <= s_max, f"MaxTime_{event}"
 
 # Ensure every event has at least one transition (in or out)
-for event in df["title"]:
-    prob += s_vars[event] >= s_min, f"EnsureStart_{event}"
-    prob += s_vars[event] <= s_max, f"EnsureEnd_{event}"
+# for event in df["title"]:
+#     prob += s_vars[event] >= s_min, f"EnsureStart_{event}"
+#     prob += s_vars[event] <= s_max, f"EnsureEnd_{event}"
 
 #Make more transitions likely so nothing is left out
-prob += lpSum(1 - delta_vars[(i, j)] for i in df["title"] for j in df["title"] if i != j), "EncourageTransitions"
+#prob += lpSum(1 - delta_vars[(i, j)] for i in df["title"] for j in df["title"] if i != j), "EncourageTransitions"
 
 
 
 #Objective function
 
-prob += lpSum(category_matrix[df.loc[i, "category"]][df.loc[j, "category"]] * delta_vars[(df.loc[i, "title"], df.loc[j, "title"])]
-             for i in range(len(df)) for j in range(len(df)) if i != j), "Maximize_Transition_Score"
+weight_factor = 100  # Adjust based on optimization needs
+prob += lpSum(
+    weight_factor * category_matrix[df.loc[i, "category"]][df.loc[j, "category"]] * delta_vars[(df.loc[i, "title"], df.loc[j, "title"])]
+    for i in range(len(df)) for j in range(len(df)) if i != j
+), "Maximize_Weighted_Transition_Score"
+
+
 
 
 prob.solve()
